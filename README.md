@@ -24,7 +24,7 @@
 </p>
 
 <center>
-<img src="https://uark-aicv.github.io/OpenFusion/static/images/pipeline.png" width="80%">
+<img src="assets/pipeline.png" width="80%">
 </center>
 
 **TL;DR**: *Open-Fusion* builds an open-vocabulary 3D queryable scene from a sequence of posed RGB-D images in real-time.
@@ -94,9 +94,7 @@ Please refer to [this](deploy/README.md) for more details.
 
 
 <center>
-<video id="teaser" autoplay muted loop playsinline height="100%">
-  <source src="https://uark-aicv.github.io/OpenFusion/static/videos/kobuki_crop.mp4" type="video/mp4">
-</video>
+<img src="assets/output.gif">
 </center>
 
 
