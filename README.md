@@ -23,9 +23,9 @@
   <div align="center"></div>
 </p>
 
-<center>
+<p align="center">
 <img src="assets/pipeline.png" width="80%">
-</center>
+</p>
 
 **TL;DR**: *Open-Fusion* builds an open-vocabulary 3D queryable scene from a sequence of posed RGB-D images in real-time.
 
@@ -93,9 +93,9 @@ python deploy/server.py
 Please refer to [this](deploy/README.md) for more details.
 
 
-<center>
+<p align="center">
 <img src="assets/output.gif">
-</center>
+</p>
 
 
 ## Acknowledgement 🙇
