@@ -266,82 +266,6 @@ class BaseState(object):
         buf_coords = voxel_coords.reshape((-1, self.block_resolution**3, 3)).mean(1)
         return buf_coords
 
-    """"""
-    # def prepare_world(self, depth, extrinsic):
-    #     # Get active frustum block coordinates from input
-    #     frustum_block_coords = self.world.compute_unique_block_coordinates(
-    #         depth, self.intrinsic, extrinsic, self.depth_scale, self.depth_max
-    #     )
-    #     # Activate them in the underlying hash map (may have been inserted)
-    #     self.world.hashmap().activate(frustum_block_coords)
-
-    #     # Find buf indices in the underlying engine
-    #     buf_indices, masks = self.world.hashmap().find(frustum_block_coords)
-    #     o3c.cuda.synchronize()
-
-    #     voxel_coords, voxel_indices = self.world.voxel_coordinates_and_flattened_indices(
-    #         buf_indices
-    #     )
-    #     o3c.cuda.synchronize()
-    #     return voxel_coords, voxel_indices, buf_indices, frustum_block_coords
-
-    # def custom_integrate(self, depth, color, v_proj, u_proj, d_proj, valid_voxel_indices):
-    #     depth_readings = depth.as_tensor()[v_proj, u_proj, 0].to(o3c.float32) / self.depth_scale
-    #     sdf = depth_readings - d_proj
-
-    #     mask_inlier = (depth_readings > 0) \
-    #         & (depth_readings < self.depth_max) \
-    #         & (sdf >= -self.trunc)
-
-    #     sdf = sdf[mask_inlier]
-    #     v_proj, u_proj = v_proj[mask_inlier], u_proj[mask_inlier]
-    #     sdf[sdf >= self.trunc] = self.trunc
-    #     sdf = sdf / self.trunc
-    #     o3c.cuda.synchronize()
-
-    #     weight = self.world.attribute('weight').reshape((-1, 1))
-    #     tsdf = self.world.attribute('tsdf').reshape((-1, 1))
-
-    #     valid_voxel_indices = valid_voxel_indices[mask_inlier]
-    #     # added weight decay
-    #     w = weight[valid_voxel_indices] * 0.9
-    #     wp = w + 1
-
-    #     tsdf[valid_voxel_indices] = (
-    #         tsdf[valid_voxel_indices] * w +
-    #         sdf.reshape(w.shape)
-    #     ) / (wp)
-
-    #     color_readings = color.as_tensor()[v_proj, u_proj].to(o3c.float32)
-    #     color = self.world.attribute('color').reshape((-1, 3))
-    #     color[valid_voxel_indices] = (
-    #         color[valid_voxel_indices] * w +
-    #         color_readings
-    #     ) / (wp)
-
-    #     weight[valid_voxel_indices] = wp
-    #     o3c.cuda.synchronize()
-
-    # def update_custom(self, color, depth, extrinsic):
-    #     print(f"hashmap size: {self.world.hashmap().size()}, {self.world.hashmap().capacity()}")
-    #     color = o3d.t.geometry.Image(color).to(o3c.uint8).to(self.device)
-    #     depth = o3d.t.geometry.Image(depth).to(o3c.uint16).to(self.device)
-    #     extrinsic = o3c.Tensor.from_numpy(extrinsic)
-
-    #     # Get active frustum block coordinates from input
-    #     voxel_coords, voxel_indices, buf_indices, frustum_block_coords = \
-    #         self.prepare_world(depth, extrinsic)
-
-    #     # get points in fov
-    #     v_proj, u_proj, d_proj, mask_proj = self.get_points_in_fov(
-    #         voxel_coords, extrinsic, self.intrinsic, depth.columns, depth.rows, self.device
-    #     )
-
-    #     # TSDF integration
-    #     self.custom_integrate(depth, color, v_proj, u_proj, d_proj, voxel_indices[mask_proj])
-    #     return frustum_block_coords, extrinsic
-    """"""
-
     def update(self, color, depth, extrinsic):
         color = o3d.t.geometry.Image(color).to(o3c.uint8).to(self.device)
         depth = o3d.t.geometry.Image(depth).to(o3c.uint16).to(self.device)
@@ -506,12 +430,13 @@ class VLState(BaseState):
         voxel_coords, _ = self.world.voxel_coordinates_and_flattened_indices(
             cur_buf_indices
         )
-        cur_buf_indices = torch.utils.dlpack.from_dlpack(cur_buf_indices.to_dlpack()).cpu()
+        cur_buf_indices = torch.utils.dlpack.from_dlpack(cur_buf_indices.to_dlpack())
+        cur_buf_indices_cpu = cur_buf_indices.cpu()
         voxel_coords = torch.utils.dlpack.from_dlpack(voxel_coords.to_dlpack())
 
-        cur_keys = self.emb_keys[cur_buf_indices] # (N, O)
-        cur_confs = self.emb_confs[cur_buf_indices] # (N, O)
-        cur_coords = self.emb_coords[cur_buf_indices] # (N, O, 3)
+        cur_keys = self.emb_keys[cur_buf_indices_cpu] # (N, O)
+        cur_confs = self.emb_confs[cur_buf_indices_cpu] # (N, O)
+        cur_coords = self.emb_coords[cur_buf_indices_cpu] # (N, O, 3)
         unique_keys, inverse_unique_keys = torch.unique(cur_keys, return_inverse=True)
 
         # print(cur_keys.shape)
@@ -537,6 +462,7 @@ class VLState(BaseState):
             # NOTE: find the corresponding buf indices (N',) for each xyz projected coords and valid mask of (N,)
             # NOTE: N' <= N as some of the projected coords may not be in the active blocks
             obs_buf_idx, valid = self.find_buf_indices_from_coord(
+                cur_buf_indices,
                 voxel_coords.view(-1, self.block_resolution**3, 3), # (M, 8^3, 3)
                 obs_coords # (N, 3)
             )
@@ -544,36 +470,24 @@ class VLState(BaseState):
                 torch.cuda.empty_cache()
                 print("[*] nothing can be integrated")
                 return
-            obs_keys = obs_keys[valid] # (N',)
-            obs_conf = obs_conf[valid] # (N',)
-            obs_coords = obs_coords[valid] # (N', 3)
 
-            # NOTE: find the unique buf indices (unique blocks) and their corresponding counts (U,), (N',)
+             # NOTE: find the unique buf indices (unique blocks) and their corresponding counts (U,), (N',)
             unique_obs_buf, inverse_obs_ind = torch.unique(obs_buf_idx, return_inverse=True)
             sample_ind = self.random_sample_indices(inverse_obs_ind, self.num_obj_points_per_block)
 
+            obs_keys = obs_keys[valid][sample_ind] # (L,)
+            obs_conf = obs_conf[valid][sample_ind] # (L,)
+            obs_coords = obs_coords[valid][sample_ind] # (L, 3)
+
             obs_buf_idx = obs_buf_idx[sample_ind] # (L,)
-            obs_keys = obs_keys[sample_ind] # (L,)
-            obs_conf = obs_conf[sample_ind] # (L,)
-            obs_coords = obs_coords[sample_ind] # (L, 3)
             inverse_obs_ind = inverse_obs_ind[sample_ind] # (L,)
 
-            tmp = torch.zeros(unique_obs_buf.shape[0], self.num_obj_points_per_block, device=obs_keys.device).long()
             count = self.cumulative_count(inverse_obs_ind)
             obs_unique_, obs_keys_ = self.process_new_keys(obs_keys, start_id=len(self.emb_dict))
-            tmp[inverse_obs_ind, count] = obs_keys_
-            cur_keys[obs_buf_idx.cpu()] = tmp[inverse_obs_ind].cpu()# (L, O)
-            self.emb_keys[cur_buf_indices] = cur_keys
 
-            tmp = torch.zeros(unique_obs_buf.shape[0], self.num_obj_points_per_block, device=obs_conf.device)
-            tmp[inverse_obs_ind, count] = obs_conf
-            cur_confs[obs_buf_idx.cpu()] = tmp[inverse_obs_ind].cpu()# (L, O)
-            self.emb_confs[cur_buf_indices] = cur_confs
-
-            tmp = torch.zeros(unique_obs_buf.shape[0], self.num_obj_points_per_block, 3, device=obs_coords.device)
-            tmp[inverse_obs_ind, count] = obs_coords
-            cur_coords[obs_buf_idx.cpu()] = tmp[inverse_obs_ind].cpu()# (L, O)
-            self.emb_coords[cur_buf_indices] = cur_coords
+            self.emb_keys[obs_buf_idx, count] = obs_keys_.cpu()
+            self.emb_confs[obs_buf_idx, count] = obs_conf.cpu()
+            self.emb_coords[obs_buf_idx, count] = obs_coords.cpu()
 
             cap = res_dict["caption"][obs_unique_-1].cpu()
             self.emb_dict = torch.cat([self.emb_dict, cap], dim=0)
@@ -691,6 +605,7 @@ class VLState(BaseState):
             if DBG:
                 print(voxel_coords.view(-1, self.block_resolution**3, 3).shape, comb_coords.shape, obs_coords.shape, emb_coords.shape)
             comb_buf_idx, valid = self.find_buf_indices_from_coord(
+                cur_buf_indices,
                 voxel_coords.view(-1, self.block_resolution**3, 3), # (M, 8^3, 3)
                 comb_coords # (N, 3)
             )
@@ -699,40 +614,26 @@ class VLState(BaseState):
                 print("[*] nothing can be integrated")
                 return
 
-            comb_keys = torch.cat([
-                res_keys,
-                cur_keys.view(-1)[object_mask][mask_proj.cpu()].to(res_keys.device)
-            ], dim=0)[valid] # (N',)
-            comb_conf = torch.cat([
-                obs_conf,
-                values.to(obs_conf.device)
-            ], dim=0)[valid] # (N',)
-            comb_coords = comb_coords[valid] # (N', 3)
-
             unique_comb_buf, inverse_comb_ind = torch.unique(comb_buf_idx, return_inverse=True)
             sample_ind = self.random_sample_indices(inverse_comb_ind, self.num_obj_points_per_block)
 
-            comb_buf_idx = comb_buf_idx[sample_ind] # (L,)
-            comb_keys = comb_keys[sample_ind] # (L,)
-            comb_conf = comb_conf[sample_ind] # (L,)
-            comb_coords = comb_coords[sample_ind] # (L, 3)
+            comb_keys = torch.cat([
+                res_keys,
+                cur_keys.view(-1)[object_mask][mask_proj.cpu()].to(res_keys.device)
+            ], dim=0)[valid][sample_ind].cpu() # (L,)
+            comb_conf = torch.cat([
+                obs_conf,
+                values.to(obs_conf.device)
+            ], dim=0)[valid][sample_ind].cpu() # (L,)
+            comb_coords = comb_coords[valid][sample_ind].cpu() # (L, 3)
+            comb_buf_idx = comb_buf_idx[sample_ind].cpu() # (L,)
             inverse_comb_ind = inverse_comb_ind[sample_ind] # (L,)
 
-            tmp = torch.zeros(unique_comb_buf.shape[0], self.num_obj_points_per_block, device=obs_keys.device).long()
-            count = self.cumulative_count(inverse_comb_ind)
-            tmp[inverse_comb_ind, count] = comb_keys
-            cur_keys[comb_buf_idx.cpu()] = tmp[inverse_comb_ind].cpu() # (L, O)
-            self.emb_keys[cur_buf_indices] = cur_keys
+            count = self.cumulative_count(inverse_comb_ind).cpu()
 
-            tmp = torch.zeros(unique_comb_buf.shape[0], self.num_obj_points_per_block, device=obs_conf.device)
-            tmp[inverse_comb_ind, count] = comb_conf
-            cur_confs[comb_buf_idx.cpu()] = tmp[inverse_comb_ind].cpu()# (L, O)
-            self.emb_confs[cur_buf_indices] = cur_confs
-
-            tmp = torch.zeros(unique_comb_buf.shape[0], self.num_obj_points_per_block, 3, device=obs_coords.device)
-            tmp[inverse_comb_ind, count] = comb_coords
-            cur_coords[comb_buf_idx.cpu()] = tmp[inverse_comb_ind].cpu()# (L, O)
-            self.emb_coords[cur_buf_indices] = cur_coords
+            self.emb_keys[comb_buf_idx, count] = comb_keys
+            self.emb_confs[comb_buf_idx, count] = comb_conf
+            self.emb_coords[comb_buf_idx, count] = comb_coords
 
             torch.cuda.empty_cache()
             return
@@ -760,13 +661,14 @@ class VLState(BaseState):
         sampled_indices = torch.cat(sampled_indices)
         return sampled_indices
 
-    def find_buf_indices_from_coord(self, voxel_coords, coordinates):
+    def find_buf_indices_from_coord(self, buf_indices, voxel_coords, coordinates):
         """
         Finds the index of the cube that incorporates each coordinate in a batched manner.
 
         Args:
+            buf_indices (torch.Tensor): N tensor of buf indices for the given voxel coords
             voxel_coords (torch.Tensor): Nx8^3x3 tensor where N is the number of cubes.
-            coordinates (torch.Tensor): Mx3 tensor where M is the number of coordinates.
+            coordinates (torch.Tensor): Mx3 tensor where M is the number of coordinates. (usually M >> N)
 
         Returns:
             tensor: M tensor that contains the index of the cube that incorporates each coordinate.
@@ -778,17 +680,12 @@ class VLState(BaseState):
         min_vals = voxel_coords[:, 0, :]  - self.voxel_size/2 # Shape: Nx3
         max_vals = voxel_coords[:, -1, :] + self.voxel_size/2 # Shape: Nx3
 
-        # NOTE: expand dimensions to make the tensors broadcastable
-        min_vals_exp = min_vals.unsqueeze(1)  # Shape: Nx1x3
-        max_vals_exp = max_vals.unsqueeze(1)  # Shape: Nx1x3
-        coordinates_exp = coordinates.unsqueeze(0)  # Shape: 1xMx3
-
         # NOTE: check if each coordinate is inside each cube
-        is_inside = (min_vals_exp <= coordinates_exp) & (coordinates_exp < max_vals_exp)  # Shape: NxMx3
+        is_inside = (min_vals[:, None] <= coordinates[None]) & (coordinates[None] < max_vals[:, None]) # Shape: NxMx3
         # NOTE: all coordinates must be inside the cube along all 3 dimensions (x, y, z)
         is_inside_all_dims = torch.all(is_inside, dim=2).long()  # Shape: NxM
         # NOTE: find cube index for each coordinate
-        cube_idx_for_each_coord = torch.argmax(is_inside_all_dims, dim=0)  # Shape: M
+        cube_idx_for_each_coord = buf_indices[torch.argmax(is_inside_all_dims, dim=0)]  # Shape: M
         # NOTE: find valid mask where a cube was found for a coordinate
         valid_mask = torch.any(is_inside_all_dims, dim=0)  # Shape: M
         return cube_idx_for_each_coord[valid_mask], valid_mask

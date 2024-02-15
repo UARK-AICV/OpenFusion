@@ -9,6 +9,9 @@ cache/*
 */cache*/
 tmp*.py
 *pickle
+sample/*
+icl_*/*
+openfusion/zoo/xdecoder_seem/checkpoints/*
 
 # compiled files #
 *.pyc

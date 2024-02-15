@@ -16,7 +16,7 @@ class Dataset(object):
             self.depths_list = self.load_depth()
             self.pose_list = self.load_pose()
             if max_frames == -1:
-                self.max_frames = len(self.rgbs_list)
+                self.max_frames = len(self.pose_list)
 
     def __len__(self):
         return self.max_frames
