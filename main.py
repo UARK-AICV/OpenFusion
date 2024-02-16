@@ -64,13 +64,18 @@ def main():
     parser.add_argument('--host_ip', type=str, default="YOUR IP") # for stream
     args = parser.parse_args()
 
+    if args.stream:
+        args.scene = "live"
+        if not os.path.exists(f"sample/{args.data}"):
+            os.mkdir(f"sample/{args.data}")
+            raise ValueError(f"[*] please place the intrinsic.txt inside `sample/{args.data}/`.")
+        if not os.path.exists(f"sample/{args.data}/live"):
+            os.mkdir(f"sample/{args.data}/live")
+
     params = get_config(args.data, args.scene)
     dataset:Dataset = params["dataset"](params["path"], args.frames, args.stream)
     intrinsic = dataset.load_intrinsics(params["img_size"], params["input_size"])
     slam = build_slam(args, intrinsic, params)
-
-    if args.stream:
-        args.scene = "live"
 
     # NOTE: real-time semantic map construction
     if not os.path.exists(f"{args.data}_{args.scene}"):

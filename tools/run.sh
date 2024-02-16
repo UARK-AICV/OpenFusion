@@ -19,3 +19,5 @@ docker run --rm --gpus all --device=/dev/dri:/dev/dri \
     --network=host \
     $REGISTRY_NAME/$IMAGE_NAME:latest \
     python main.py $@
+
+sudo chown -R $USER:$USER ./

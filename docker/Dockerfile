@@ -54,5 +54,5 @@ WORKDIR /workspace
 RUN pip install torchshow prettytable
 ADD openfusion/zoo/xdecoder_seem/requirements.txt /workspace/openfusion/zoo/xdecoder_seem/requirements.txt
 RUN pip install --no-cache-dir -r /workspace/openfusion/zoo/xdecoder_seem/requirements.txt
-RUN pip install --no-cache-dir --upgrade open3d==0.17.0
+RUN pip install --no-cache-dir --upgrade open3d==0.18.0
 RUN pip uninstall tensorflow -y
